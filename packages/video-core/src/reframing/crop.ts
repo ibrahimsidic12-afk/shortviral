@@ -37,7 +37,6 @@ export function calculateCrop(
     padding?: number;
   }
 ): CropRegion {
-  const smoothing = options?.smoothing ?? 0.3;
   const padding = options?.padding ?? 0.1;
 
   // Calculate target crop dimensions
@@ -75,7 +74,7 @@ export function calculateCrop(
     centerY = Math.round(sourceHeight * 0.45);
   }
 
-  // Apply padding (don't let subject get too close to edges)
+  // Apply padding — constrain subject to inner region of crop
   const paddingX = Math.round(cropWidth * padding);
   const paddingY = Math.round(cropHeight * padding);
 
@@ -83,7 +82,11 @@ export function calculateCrop(
   let x = centerX - Math.round(cropWidth / 2);
   let y = centerY - Math.round(cropHeight / 2);
 
-  // Clamp to bounds
+  // Clamp to bounds (with padding consideration)
+  x = Math.max(paddingX, Math.min(x, sourceWidth - cropWidth - paddingX));
+  y = Math.max(paddingY, Math.min(y, sourceHeight - cropHeight - paddingY));
+
+  // Final clamp to ensure we never go out of source bounds
   x = Math.max(0, Math.min(x, sourceWidth - cropWidth));
   y = Math.max(0, Math.min(y, sourceHeight - cropHeight));
 

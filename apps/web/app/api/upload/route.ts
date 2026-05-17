@@ -1,5 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { prisma } from '@/lib/db';
+
+// Force dynamic rendering — this route uses runtime env vars and database
+export const dynamic = 'force-dynamic';
+
+const s3 = new S3Client({
+  region: process.env.S3_REGION || 'us-east-1',
+  endpoint: process.env.S3_ENDPOINT || undefined,
+  forcePathStyle: process.env.S3_PROVIDER !== 'r2', // R2 uses virtual-hosted style
+  credentials: {
+    accessKeyId: process.env.S3_ACCESS_KEY || 'minioadmin',
+    secretAccessKey: process.env.S3_SECRET_KEY || 'minioadmin',
+  },
+});
+
+const BUCKET = process.env.S3_BUCKET || 'clip-app-videos';
 
 const MAX_FILE_SIZE = parseInt(process.env.MAX_FILE_SIZE_MB || '500', 10) * 1024 * 1024;
 
@@ -11,9 +29,14 @@ const ALLOWED_TYPES = [
   'video/webm',
 ];
 
+// Sanitize filename to prevent path traversal
+function sanitizeFilename(filename: string): string {
+  return filename.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
+}
+
 /**
  * POST /api/upload
- * Generate a presigned S3 upload URL for the client.
+ * Generate a presigned S3 upload URL for the client and persist a Video record.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -48,17 +71,50 @@ export async function POST(request: NextRequest) {
 
     // Generate video ID and storage key
     const videoId = randomUUID();
-    const extension = filename.split('.').pop() || 'mp4';
+    const safeName = sanitizeFilename(filename);
+    const extension = safeName.split('.').pop() || 'mp4';
     const storageKey = `uploads/${videoId}/original.${extension}`;
 
-    // TODO: Generate real presigned URL with @aws-sdk/client-s3
-    // For now, return a mock response structure
-    const uploadUrl = `${process.env.S3_ENDPOINT || 'http://localhost:9000'}/${process.env.S3_BUCKET || 'clip-app-videos'}/${storageKey}`;
+    // TODO: Replace with real authenticated user ID from auth middleware
+    const userId = request.headers.get('x-user-id') || '00000000-0000-0000-0000-000000000000';
+
+    // Ensure the dev user exists (foreign key constraint requires a valid User)
+    await prisma.user.upsert({
+      where: { id: userId },
+      update: {},
+      create: {
+        id: userId,
+        email: 'dev@localhost',
+        name: 'Dev User',
+      },
+    });
+
+    // Persist Video record with status "uploading"
+    const video = await prisma.video.create({
+      data: {
+        id: videoId,
+        userId,
+        originalName: filename,
+        storageKey,
+        status: 'uploading',
+        tags: [],
+      },
+    });
+
+    // Generate real presigned URL for client-side upload
+    const putCommand = new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: storageKey,
+      ContentType: contentType,
+      ContentLength: size,
+    });
+
+    const uploadUrl = await getSignedUrl(s3, putCommand, { expiresIn: 3600 });
 
     return NextResponse.json({
       success: true,
       data: {
-        videoId,
+        videoId: video.id,
         uploadUrl,
         storageKey,
         expiresIn: 3600, // URL valid for 1 hour

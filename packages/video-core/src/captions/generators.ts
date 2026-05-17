@@ -1,4 +1,4 @@
-import { formatTimestamp, splitIntoLines } from './utils.js';
+import { formatTimestamp } from './utils.js';
 import type { CaptionLine } from './types.js';
 
 /**

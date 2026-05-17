@@ -1,0 +1,220 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────
+
+enum UserRole {
+  user
+  admin
+}
+
+enum UserPlan {
+  free
+  pro
+  enterprise
+}
+
+enum VideoStatus {
+  uploading
+  uploaded
+  processing
+  transcribing
+  analyzing
+  ready
+  error
+}
+
+enum ClipStatus {
+  suggested
+  queued
+  rendering
+  rendered
+  exported
+  error
+}
+
+enum JobType {
+  transcribe
+  detect_highlights
+  generate_captions
+  render_clip
+  generate_preview
+  extract_keyframes
+  analyze_keyframes
+}
+
+enum JobStatus {
+  waiting
+  active
+  completed
+  failed
+  delayed
+  paused
+}
+
+enum Platform {
+  tiktok
+  reels
+  shorts
+  twitter
+  square
+  landscape
+}
+
+enum CaptionStyle {
+  bold
+  karaoke
+  minimal
+  gradient
+  outline
+}
+
+enum CaptionAnimation {
+  fade
+  pop
+  slide
+  typewriter
+  none
+}
+
+// ─── Models ──────────────────────────────────────────
+
+model User {
+  id         String   @id @default(uuid()) @db.Uuid
+  email      String   @unique @db.VarChar(254)
+  name       String   @db.VarChar(100)
+  avatarUrl  String?
+  role       UserRole @default(user)
+  plan       UserPlan @default(free)
+  credits    Int      @default(10)
+  totalClips Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  videos Video[]
+  clips  Clip[]
+
+  // Check constraints applied via migration SQL:
+  // credits >= 0
+  // "totalClips" >= 0
+}
+
+model Video {
+  id           String      @id @default(uuid()) @db.Uuid
+  userId       String      @db.Uuid
+  originalName String      @db.VarChar(255)
+  storageKey   String      @db.VarChar(1024)
+  url          String?
+  thumbnailUrl String?
+  status       VideoStatus @default(uploading)
+  metadata     Json?
+  error        String?     @db.Text
+  tags         String[]    @default([])
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id])
+  clips      Clip[]
+  transcript Transcript?
+  jobs       Job[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+model Transcript {
+  id             String   @id @default(uuid()) @db.Uuid
+  videoId        String   @unique @db.Uuid
+  text           String   @db.Text
+  language       String   @db.VarChar(10)
+  duration       Float
+  segmentCount   Int
+  wordCount      Int
+  model          String   @db.VarChar(100)
+  storageKey     String   @db.VarChar(512)
+  processingTime Int
+  createdAt      DateTime @default(now())
+
+  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+}
+
+model Clip {
+  id             String     @id @default(uuid()) @db.Uuid
+  videoId        String     @db.Uuid
+  userId         String     @db.Uuid
+  startTime      Float
+  endTime        Float
+  duration       Float
+  hookText       String     @db.VarChar(500)
+  reason         String     @db.VarChar(1000)
+  viralityScore  Int
+  tags           String[]   @default([])
+  status         ClipStatus @default(suggested)
+  settings       Json
+  renderProgress Int?
+  previewUrl     String?
+  error          String?    @db.Text
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  video   Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  user    User     @relation(fields: [userId], references: [id])
+  exports Export[]
+  jobs    Job[]
+  // Check constraints applied via migration SQL:
+  // "startTime" < "endTime"
+  // "viralityScore" >= 0 AND "viralityScore" <= 100
+
+  @@index([videoId])
+  @@index([userId])
+  @@index([status])
+}
+
+model Export {
+  id         String   @id @default(uuid()) @db.Uuid
+  clipId     String   @db.Uuid
+  platform   Platform
+  url        String   @db.VarChar(2048)
+  storageKey String   @db.VarChar(512)
+  fileSize   BigInt
+  resolution String   @db.VarChar(20)
+  exportedAt DateTime @default(now())
+
+  clip Clip @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@unique([clipId, platform])
+}
+
+model Job {
+  id          String    @id @default(uuid()) @db.Uuid
+  type        JobType
+  status      JobStatus @default(waiting)
+  videoId     String?   @db.Uuid
+  clipId      String?   @db.Uuid
+  payload     Json
+  result      Json?
+  error       String?   @db.VarChar(2000)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3)
+  progress    Int       @default(0)
+  priority    Int       @default(0)
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  video Video? @relation(fields: [videoId], references: [id], onDelete: SetNull)
+  clip  Clip?  @relation(fields: [clipId], references: [id], onDelete: SetNull)
+
+  @@index([type])
+  @@index([status])
+  @@index([videoId])
+}

@@ -6,6 +6,7 @@
   },
   "include": ["src/**/*"],
   "references": [
+    { "path": "../../packages/database" },
     { "path": "../../packages/types" },
     { "path": "../../packages/regolo-client" },
     { "path": "../../packages/video-core" }

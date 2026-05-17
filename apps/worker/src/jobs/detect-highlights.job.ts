@@ -2,6 +2,8 @@ import { Job } from 'bullmq';
 import { RegoloClient } from '@clip-ai/regolo-client';
 import { downloadToTemp } from '../lib/storage.js';
 import { logger } from '../lib/logger.js';
+import { persistenceService } from '../lib/persistence.js';
+import { prisma } from '@clip-ai/database';
 import { readFile } from 'fs/promises';
 
 interface HighlightPayload {
@@ -24,7 +26,8 @@ interface HighlightResult {
  * 1. Load transcript from storage
  * 2. Send to Regolo LLM for highlight analysis
  * 3. Score and rank clip candidates
- * 4. Store clip suggestions in database
+ * 4. Persist clip suggestions to database
+ * 5. Enqueue caption generation for each clip
  */
 export async function processHighlightDetection(
   job: Job<HighlightPayload, HighlightResult>
@@ -65,21 +68,31 @@ export async function processHighlightDetection(
     topScore: highlights.clips[0]?.viralityScore,
   });
 
-  // Step 3: Store clip suggestions
-  // TODO: Save to database (Prisma/Drizzle)
-  // For now, we simulate clip IDs
-  const clipIds = highlights.clips.map((clip, index) => {
-    const clipId = `clip-${videoId.slice(0, 8)}-${index}`;
-    logger.info(`Clip ${index + 1}: ${clip.startTime}s-${clip.endTime}s (score: ${clip.viralityScore})`, {
+  // Step 3: Fetch the video's userId for clip ownership
+  const video = await prisma.video.findUniqueOrThrow({
+    where: { id: videoId },
+    select: { userId: true },
+  });
+
+  // Step 4: Persist clip suggestions to database
+  const clipIds = await persistenceService.createClips({
+    videoId,
+    userId: video.userId,
+    clips: highlights.clips.map((clip) => ({
+      startTime: clip.startTime,
+      endTime: clip.endTime,
+      duration: clip.duration,
       hookText: clip.hookText,
+      reason: clip.reason,
+      viralityScore: clip.viralityScore,
       tags: clip.tags,
-    });
-    return clipId;
+      settings: {},
+    })),
   });
 
   await job.updateProgress(90);
 
-  // Step 4: Enqueue caption generation for each clip
+  // Step 5: Enqueue caption generation for each clip
   const { Queue } = await import('bullmq');
   const { getRedisConnection } = await import('../lib/redis.js');
   const captionQueue = new Queue('generate-captions', {
@@ -90,6 +103,7 @@ export async function processHighlightDetection(
     await captionQueue.add('generate-captions', {
       clipId,
       transcriptId,
+      videoId,
       style: 'bold', // Default style
     }, { priority: 3 });
   }

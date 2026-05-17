@@ -3,6 +3,7 @@ import { RegoloClient } from '@clip-ai/regolo-client';
 import { extractAudio } from '@clip-ai/video-core';
 import { downloadToTemp, uploadBuffer } from '../lib/storage.js';
 import { logger } from '../lib/logger.js';
+import { persistenceService } from '../lib/persistence.js';
 import { readFile, unlink } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -86,11 +87,29 @@ export async function processTranscription(
   );
   await job.updateProgress(85);
 
-  // Step 5: Cleanup temp files
-  await Promise.allSettled([unlink(videoPath), unlink(audioPath)]);
+  // Step 5: Persist transcript to database
+  const wordCount = transcript.words?.length || 0;
+  const segmentCount = transcript.segments?.length || 0;
+  const fullText = transcript.text || '';
+
+  await persistenceService.createTranscript({
+    videoId,
+    text: fullText,
+    language: language || transcript.language || 'en',
+    duration: transcript.duration,
+    segmentCount,
+    wordCount,
+    model: 'faster-whisper-large-v3',
+    storageKey: transcriptKey,
+    processingTime: Date.now() - job.timestamp,
+  });
   await job.updateProgress(90);
 
-  // Step 6: Enqueue highlight detection (next pipeline step)
+  // Step 6: Cleanup temp files
+  await Promise.allSettled([unlink(videoPath), unlink(audioPath)]);
+  await job.updateProgress(92);
+
+  // Step 7: Enqueue highlight detection (next pipeline step)
   const { Queue } = await import('bullmq');
   const { getRedisConnection } = await import('../lib/redis.js');
   const highlightQueue = new Queue('detect-highlights', {

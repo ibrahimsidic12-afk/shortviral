@@ -219,7 +219,7 @@ Apply the "${options.style}" style to each line.
 
 ${styleGuide}
 
-Input: Array of words with timestamps
+Input: Array of words with timestamps and full transcript for context
 Output: Grouped caption lines with styling metadata
 
 OUTPUT FORMAT (strict JSON):
@@ -250,7 +250,10 @@ OUTPUT FORMAT (strict JSON):
         { role: 'system', content: systemPrompt },
         {
           role: 'user',
-          content: JSON.stringify({ words: words.slice(0, 500) }), // Limit for token efficiency
+          content: JSON.stringify({
+            transcript: transcript.slice(0, 2000),
+            words: words.slice(0, 500),
+          }),
         },
       ],
       response_format: { type: 'json_object' },

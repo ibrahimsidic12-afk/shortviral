@@ -1,14 +1,13 @@
 import { Job } from 'bullmq';
-import { RegoloClient } from '@clip-ai/regolo-client';
 import { generateASS, splitIntoLines } from '@clip-ai/video-core';
 import { downloadToTemp, uploadBuffer } from '../lib/storage.js';
 import { logger } from '../lib/logger.js';
 import { readFile, unlink } from 'fs/promises';
-import type { CaptionStyleOptions } from '@clip-ai/regolo-client';
 
 interface CaptionPayload {
   clipId: string;
   transcriptId: string;
+  videoId: string;
   style: string;
 }
 
@@ -30,15 +29,14 @@ interface CaptionResult {
 export async function processCaptionGeneration(
   job: Job<CaptionPayload, CaptionResult>
 ): Promise<CaptionResult> {
-  const { clipId, transcriptId, style } = job.data;
+  const { clipId, transcriptId, videoId, style } = job.data;
 
   logger.info(`Generating captions for clip: ${clipId}`);
   await job.updateProgress(10);
 
-  // Step 1: Load transcript (we need word-level timestamps)
-  // In a real app, we'd query the database for the clip's time range
-  // For now, load the full transcript
-  const transcriptPath = await downloadToTemp(`transcripts/*/${transcriptId}.json`, 'json');
+  // Step 1: Load transcript using the exact storage key (no globs — S3 doesn't support them)
+  const transcriptKey = `transcripts/${videoId}/${transcriptId}.json`;
+  const transcriptPath = await downloadToTemp(transcriptKey, 'json');
   const transcriptData = JSON.parse(await readFile(transcriptPath, 'utf-8'));
   await job.updateProgress(20);
 

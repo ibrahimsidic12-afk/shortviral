@@ -2,6 +2,8 @@ import { Job } from 'bullmq';
 import { renderClip, getPreset } from '@clip-ai/video-core';
 import { downloadToTemp, uploadFromPath } from '../lib/storage.js';
 import { logger } from '../lib/logger.js';
+import { persistenceService } from '../lib/persistence.js';
+import { Platform } from '@clip-ai/database';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -12,6 +14,7 @@ interface RenderPayload {
   videoStorageKey: string;
   subtitleStorageKey?: string;
   preset: string;
+  platform: string;
   startTime: number;
   endTime: number;
   crop?: { x: number; y: number; width: number; height: number };
@@ -23,6 +26,7 @@ interface RenderResult {
   outputStorageKey: string;
   fileSize: number;
   duration: number;
+  exportId: string;
 }
 
 /**
@@ -43,6 +47,7 @@ export async function processRenderClip(
     videoStorageKey,
     subtitleStorageKey,
     preset: presetKey,
+    platform,
     startTime,
     endTime,
     crop,
@@ -100,9 +105,23 @@ export async function processRenderClip(
     const { url, size } = await uploadFromPath(outputPath, outputKey, 'video/mp4');
 
     logger.info(`Uploaded rendered clip: ${outputKey}`, { fileSize: size });
+    await job.updateProgress(90);
+
+    // Step 5: Persist export record and update clip status
+    const resolution = `${preset.width}x${preset.height}`;
+    const exportId = await persistenceService.createExport({
+      clipId,
+      platform: platform as Platform,
+      url,
+      storageKey: outputKey,
+      fileSize: size,
+      resolution,
+    });
+
+    logger.info(`Persisted export record: ${exportId}`);
     await job.updateProgress(95);
 
-    // Step 5: Cleanup
+    // Step 6: Cleanup
     await Promise.allSettled(tempFiles.map(f => unlink(f)));
     await job.updateProgress(100);
 
@@ -110,6 +129,7 @@ export async function processRenderClip(
       outputStorageKey: outputKey,
       fileSize: size,
       duration: endTime - startTime,
+      exportId,
     };
   } catch (error) {
     // Cleanup on error

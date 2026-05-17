@@ -66,6 +66,27 @@ services:
       "
 
   # ─────────────────────────────────────────
+  # PostgreSQL - Database
+  # ─────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: clipai-postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: clipai
+      POSTGRES_PASSWORD: clipai
+      POSTGRES_DB: clipai
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clipai -d clipai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
   # BullMQ Board - Queue Dashboard UI
   # ─────────────────────────────────────────
   bull-board:
@@ -85,4 +106,6 @@ volumes:
   redis_data:
     driver: local
   minio_data:
+    driver: local
+  postgres_data:
     driver: local

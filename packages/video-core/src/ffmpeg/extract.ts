@@ -1,5 +1,5 @@
 import ffmpeg from 'fluent-ffmpeg';
-import { resolve } from 'path';
+import { resolve as resolvePath } from 'path';
 
 export interface VideoInfo {
   duration: number;
@@ -42,14 +42,14 @@ export async function getVideoInfo(inputPath: string): Promise<VideoInfo> {
       }
 
       resolve({
-        duration: parseFloat(data.format.duration || '0'),
+        duration: parseFloat(String(data.format.duration ?? '0')),
         width: videoStream.width || 0,
         height: videoStream.height || 0,
         fps: Math.round(fps * 100) / 100,
-        bitrate: parseInt(data.format.bit_rate || '0', 10),
+        bitrate: parseInt(String(data.format.bit_rate ?? '0'), 10),
         codec: videoStream.codec_name || 'unknown',
         audioCodec: audioStream?.codec_name || 'none',
-        size: parseInt(data.format.size || '0', 10),
+        size: parseInt(String(data.format.size ?? '0'), 10),
         format: data.format.format_name || 'unknown',
       });
     });
@@ -109,7 +109,7 @@ export async function extractKeyframes(
 
   // Extract frames using select filter for precise timing
   return new Promise((resolve, reject) => {
-    const outputPattern = resolve(outputDir, 'frame_%04d.jpg');
+    const outputPattern = resolvePath(outputDir, 'frame_%04d.jpg');
 
     ffmpeg(inputPath)
       .outputOptions([
@@ -123,7 +123,7 @@ export async function extractKeyframes(
         for (let i = 0; i < totalFrames; i++) {
           const frameNum = String(i + 1).padStart(4, '0');
           frames.push({
-            path: resolve(outputDir, `frame_${frameNum}.jpg`),
+            path: resolvePath(outputDir, `frame_${frameNum}.jpg`),
             timestamp: i * interval,
           });
         }

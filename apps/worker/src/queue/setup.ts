@@ -5,9 +5,21 @@ import { processHighlightDetection } from '../jobs/detect-highlights.job.js';
 import { processRenderClip } from '../jobs/render-clip.job.js';
 import { processCaptionGeneration } from '../jobs/generate-captions.job.js';
 import { logger } from '../lib/logger.js';
-import type { JobType } from '@clip-ai/types';
+import { persistenceService } from '../lib/persistence.js';
 
 const CONCURRENCY = parseInt(process.env.CONCURRENT_WORKERS || '3', 10);
+
+/**
+ * Minimum interval (in ms) between progress updates for a single job.
+ * Progress events firing more frequently than this are dropped.
+ */
+const PROGRESS_THROTTLE_MS = 5000;
+
+/**
+ * Tracks the last time a progress update was persisted for each job ID.
+ * Entries are cleaned up when a job completes or fails.
+ */
+const lastProgressUpdate = new Map<string, number>();
 
 export interface QueueMap {
   transcribe: Queue;
@@ -91,10 +103,22 @@ export function createWorkers(): Worker[] {
 
   // Attach event handlers to all workers
   for (const worker of workers) {
+    worker.on('active', (job) => {
+      logger.info(`Job started: ${job.name}#${job.id}`, { queue: worker.name });
+      persistenceService.onJobStart(job.id!).catch((err) => {
+        logger.error(`Failed to persist job start for ${job.id}`, { error: err.message });
+      });
+    });
+
     worker.on('completed', (job) => {
       logger.info(`Job completed: ${job.name}#${job.id}`, {
         queue: worker.name,
         duration: Date.now() - (job.processedOn || job.timestamp),
+      });
+      // Clean up throttle tracking
+      lastProgressUpdate.delete(job.id!);
+      persistenceService.onJobComplete(job.id!, job.returnvalue).catch((err) => {
+        logger.error(`Failed to persist job completion for ${job.id}`, { error: err.message });
       });
     });
 
@@ -103,6 +127,34 @@ export function createWorkers(): Worker[] {
         queue: worker.name,
         error: err.message,
         attempts: job?.attemptsMade,
+      });
+      if (job) {
+        // Clean up throttle tracking
+        lastProgressUpdate.delete(job.id!);
+        persistenceService
+          .onJobFailed(job.id!, err.message, job.data?.videoId, job.data?.clipId)
+          .catch((persistErr) => {
+            logger.error(`Failed to persist job failure for ${job.id}`, {
+              error: persistErr.message,
+            });
+          });
+      }
+    });
+
+    worker.on('progress', (job, progress) => {
+      const now = Date.now();
+      const lastUpdate = lastProgressUpdate.get(job.id!) ?? 0;
+
+      // Throttle: skip if less than 5 seconds since last persisted update
+      if (now - lastUpdate < PROGRESS_THROTTLE_MS) {
+        return;
+      }
+
+      lastProgressUpdate.set(job.id!, now);
+
+      const progressValue = typeof progress === 'number' ? progress : (progress as any)?.percent ?? 0;
+      persistenceService.onJobProgress(job.id!, progressValue).catch((err) => {
+        logger.error(`Failed to persist job progress for ${job.id}`, { error: err.message });
       });
     });
 
